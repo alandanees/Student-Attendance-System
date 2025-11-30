@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 # CSV Files
 STUDENTS_FILE = "students.csv"
 ATTENDANCE_FILE = "attendance.csv"
+MODULES_FILE = "modules.csv"
 
 class Student:
     def __init__(self, student_id, name, stage, department, dob, modules):
@@ -112,21 +113,105 @@ def check_duplicate_attendance(student_id, module, lecture_number):
 def get_student_modules(student_id):
     """Get the modules for a specific student"""
     students = load_students()
-    print(f"DEBUG: Looking for student ID: {student_id}")
-    print(f"DEBUG: Total students loaded: {len(students)}")
     
     for s in students:
-        print(f"DEBUG: Checking student: {s}")
         if s.get('ID') == student_id:
             modules = s.get('Modules', '')
             # Remove quotes if they exist
             modules = modules.strip('"').strip("'").strip()
-            print(f"DEBUG: Found student! Modules value: '{modules}'")
-            print(f"DEBUG: Modules type: {type(modules)}")
             return modules
     
-    print(f"DEBUG: Student {student_id} not found!")
     return None
+
+def get_all_modules():
+    """Get a unique list of all modules from modules.csv"""
+    modules = []
+    try:
+        with open(MODULES_FILE, 'r', newline='', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # Try different possible column names (case-insensitive)
+                code = row.get('Code', row.get('code', row.get('CODE', ''))).strip()
+                module = row.get('Module', row.get('module', row.get('MODULE', ''))).strip()
+                department = row.get('Department', row.get('department', row.get('DEPARTMENT', ''))).strip()
+                
+                if code:  # Use code as the identifier
+                    modules.append({
+                        'code': code,
+                        'module': module,
+                        'department': department
+                    })
+            
+    except FileNotFoundError:
+        print("modules.csv not found")
+    except Exception as e:
+        print(f"Error reading modules.csv: {e}")
+    
+    return modules
+
+def get_modules_by_department(department):
+    """Get modules filtered by department"""
+    all_modules = get_all_modules()
+    if not department:
+        return all_modules
+    
+    filtered = [m for m in all_modules if normalize_module_name(m['department']) == normalize_module_name(department)]
+    return filtered
+
+def get_all_departments():
+    """Get unique list of departments from modules.csv"""
+    modules = get_all_modules()
+    departments = set()
+    for m in modules:
+        if m['department']:
+            departments.add(m['department'])
+    return sorted(list(departments))
+
+def normalize_module_name(module):
+    """Normalize module name for comparison (lowercase, strip spaces)"""
+    if not module:
+        return ""
+    return str(module).strip().lower()
+
+def validate_module_exists(module_code):
+    """Check if module code exists in modules.csv (case-insensitive)
+    Returns the properly cased module code if found, None otherwise"""
+    all_modules = get_all_modules()
+    normalized_input = normalize_module_name(module_code)
+    
+    for m in all_modules:
+        # Compare the module CODE, not the entire dict
+        if normalize_module_name(m['code']) == normalized_input:
+            return m['code']  # Return the properly cased code
+    return None
+
+def load_modules():
+    """Load all modules with full details"""
+    modules = []
+    try:
+        with open(MODULES_FILE, newline='', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # Clean up keys and values
+                cleaned_row = {k.strip(): v.strip() for k, v in row.items()}
+                modules.append(cleaned_row)
+    except FileNotFoundError:
+        pass
+    return modules
+
+def initialize_modules_file():
+    """Create modules.csv with proper headers if it doesn't exist"""
+    try:
+        with open(MODULES_FILE, 'x', newline='', encoding='utf-8') as f:
+            fieldnames = ['Code', 'Module', 'Department']
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+        return True
+    except FileExistsError:
+        return True
+    except Exception as e:
+        print(f"Error creating modules file: {e}")
+        return False
 
 def reset_attendance_file():
     """Reset attendance.csv file - remove all data but keep headers"""
