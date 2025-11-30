@@ -34,7 +34,9 @@ def load_students():
         with open(STUDENTS_FILE, newline='') as f:
             reader = csv.DictReader(f)
             for row in reader:
-                students.append(row)
+                # Clean up keys and values - remove extra spaces
+                cleaned_row = {k.strip(): v.strip() for k, v in row.items()}
+                students.append(cleaned_row)
     except FileNotFoundError:
         pass
     return students
@@ -136,4 +138,31 @@ def reset_attendance_file():
         return True
     except Exception as e:
         print(f"Error resetting file: {e}")
+        return False
+
+def remove_attendance(student_id, module, lecture_number):
+    """Remove a specific attendance record"""
+    try:
+        # Read all attendance records
+        records = []
+        with open(ATTENDANCE_FILE, 'r', newline='') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # Keep all records except the one we want to remove
+                if not (row.get('StudentID') == student_id and 
+                       row.get('Module') == module and 
+                       row.get('LectureNumber') == str(lecture_number)):
+                    records.append(row)
+        
+        # Write back all records except the removed one
+        with open(ATTENDANCE_FILE, 'w', newline='') as f:
+            fieldnames = ["StudentID", "Module", "LectureNumber", "Date", "Status"]
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(records)
+        return True
+    except FileNotFoundError:
+        return False
+    except Exception as e:
+        print(f"Error removing attendance: {e}")
         return False

@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from Logic import (Student, add_student, load_students, record_attendance, 
                    check_duplicate_attendance, get_student_modules, reset_attendance_file, 
-                   ATTENDANCE_FILE)
+                   remove_attendance, ATTENDANCE_FILE)
 import matplotlib.pyplot as plt
 import pandas as pd
 import csv
@@ -51,15 +51,18 @@ class AttendanceApp:
 
         self.tab_add = ttk.Frame(self.tabControl)
         self.tab_attendance = ttk.Frame(self.tabControl)
+        self.tab_remove = ttk.Frame(self.tabControl)
         self.tab_report = ttk.Frame(self.tabControl)
 
         self.tabControl.add(self.tab_add, text='Add Student')
         self.tabControl.add(self.tab_attendance, text='Record Attendance')
+        self.tabControl.add(self.tab_remove, text='Remove Attendance')
         self.tabControl.add(self.tab_report, text='Attendance Report')
         self.tabControl.pack(expand=1, fill="both")
 
         self.create_add_tab()
         self.create_attendance_tab()
+        self.create_remove_tab()
         self.create_report_tab()
 
     # --------------- Add Student Tab ---------------
@@ -89,6 +92,33 @@ class AttendanceApp:
         self.modules_entry.grid(row=5, column=1)
 
         tk.Button(self.tab_add, text="Add Student", command=self.add_student_gui).grid(row=6, column=0, columnspan=2, pady=20)
+        
+        # Add a button to view all students
+        tk.Button(self.tab_add, text="View All Students", command=self.view_students, bg='lightblue').grid(row=7, column=0, columnspan=2, pady=5)
+
+    def view_students(self):
+        """Display all students and their modules"""
+        students = load_students()
+        if not students:
+            messagebox.showinfo("Students", "No students found!")
+            return
+        
+        info = "All Students:\n" + "="*50 + "\n\n"
+        for s in students:
+            info += f"ID: {s.get('ID', 'N/A')}\n"
+            info += f"Name: {s.get('Name', 'N/A')}\n"
+            info += f"Modules: {s.get('Modules', 'NONE')}\n"
+            info += "-"*50 + "\n\n"
+        
+        # Create a scrollable text window
+        window = tk.Toplevel(self.root)
+        window.title("All Students")
+        window.geometry("500x400")
+        
+        text = tk.Text(window, wrap=tk.WORD)
+        text.pack(expand=True, fill='both', padx=10, pady=10)
+        text.insert('1.0', info)
+        text.config(state='disabled')
 
     def add_student_gui(self):
         # Get and clean module input
@@ -197,6 +227,57 @@ class AttendanceApp:
         self.att_id_entry.delete(0, tk.END)
         self.module_entry.delete(0, tk.END)
         self.lecture_entry.delete(0, tk.END)
+
+    # --------------- Remove Attendance Tab ---------------
+    def create_remove_tab(self):
+        tk.Label(self.tab_remove, text="Remove Attendance Record", font=('Arial', 12, 'bold')).grid(row=0, column=0, columnspan=2, pady=10)
+        
+        tk.Label(self.tab_remove, text="Student ID:").grid(row=1, column=0, padx=10, pady=10, sticky="w")
+        self.remove_id_entry = tk.Entry(self.tab_remove)
+        self.remove_id_entry.grid(row=1, column=1)
+
+        tk.Label(self.tab_remove, text="Module:").grid(row=2, column=0, padx=10, pady=10, sticky="w")
+        self.remove_module_entry = tk.Entry(self.tab_remove)
+        self.remove_module_entry.grid(row=2, column=1)
+
+        tk.Label(self.tab_remove, text="Lecture Number:").grid(row=3, column=0, padx=10, pady=10, sticky="w")
+        self.remove_lecture_entry = tk.Entry(self.tab_remove)
+        self.remove_lecture_entry.grid(row=3, column=1)
+
+        tk.Button(self.tab_remove, text="Remove Attendance", command=self.remove_attendance_gui, bg='#FF6B6B', fg='white').grid(row=4, column=0, columnspan=2, pady=20)
+        
+        tk.Label(self.tab_remove, text="⚠️ This will permanently delete the attendance record", fg='red', font=('Arial', 9)).grid(row=5, column=0, columnspan=2)
+
+    def remove_attendance_gui(self):
+        student_id = self.remove_id_entry.get().strip()
+        module = self.remove_module_entry.get().strip()
+        lecture_number = self.remove_lecture_entry.get().strip()
+
+        if not student_id or not module or not lecture_number:
+            messagebox.showerror("Error", "All fields are required!")
+            return
+
+        # Check if the record exists
+        if not check_duplicate_attendance(student_id, module, lecture_number):
+            messagebox.showerror("Error", f"No attendance record found for:\n\nStudent: {student_id}\nModule: {module}\nLecture: {lecture_number}")
+            return
+
+        # Confirm deletion
+        response = messagebox.askyesno(
+            "Confirm Removal",
+            f"Are you sure you want to remove this attendance record?\n\nStudent ID: {student_id}\nModule: {module}\nLecture: {lecture_number}\n\nThis action cannot be undone!"
+        )
+        
+        if not response:
+            return
+
+        if remove_attendance(student_id, module, lecture_number):
+            messagebox.showinfo("Success", "Attendance record removed successfully!")
+            self.remove_id_entry.delete(0, tk.END)
+            self.remove_module_entry.delete(0, tk.END)
+            self.remove_lecture_entry.delete(0, tk.END)
+        else:
+            messagebox.showerror("Error", "Could not remove attendance record. Please make sure attendance.csv is not open in another program.")
 
     # --------------- Attendance Report Tab ---------------
     def create_report_tab(self):
