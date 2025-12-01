@@ -1,253 +1,293 @@
-import csv
-from datetime import datetime
-import pandas as pd
-import matplotlib.pyplot as plt
+"""
+Database operations module for Student Attendance System
+Handles all SQLite database interactions, schema management, and data operations
+"""
 
-# CSV Files
-STUDENTS_FILE = "students.csv"
-ATTENDANCE_FILE = "attendance.csv"
-MODULES_FILE = "modules.csv"
+import sqlite3
+import os
+from datetime import datetime, date
+from typing import Optional, List, Tuple, Dict
 
-class Student:
-    def __init__(self, student_id, name, stage, department, dob, modules):
-        self.student_id = student_id
-        self.name = name
-        self.stage = stage
-        self.department = department
-        self.dob = dob
-        self.modules = modules
-        
-    def to_dict(self):
-        return {
-            "ID": self.student_id,
-            "Name": self.name,
-            "Stage": self.stage,
-            "Department": self.department,
-            "DOB": self.dob,
-            "Modules": self.modules
-        }
+# Database configuration
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+DB_FILE = os.path.join(BASE_DIR, 'attendance.db')
 
-#CSV functions 
-   
-def load_students():
-    students = []
+
+def get_connection():
+    """Get a connection to the SQLite database."""
+    return sqlite3.connect(DB_FILE)
+
+
+def init_db():
+    """Create core tables if they don't exist."""
+    conn = get_connection()
+    c = conn.cursor()
+
+    # Students table
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS students (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        student_code TEXT UNIQUE,
+        name TEXT,
+        created_at TEXT
+    )
+    ''')
+
+    # Attendance table with lecture support
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS attendance (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        student_id INTEGER,
+        student_code TEXT,
+        name TEXT,
+        date TEXT,
+        time TEXT,
+        method TEXT,
+        lecture_id INTEGER,
+        UNIQUE(student_id, date, lecture_id)
+    )
+    ''')
+
+    # Lectures table (optional for future use)
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS lectures (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        date TEXT,
+        created_at TEXT
+    )
+    ''')
+
+    conn.commit()
+    conn.close()
+
+
+def upgrade_db():
+    """Safe database migration helper for schema updates."""
+    conn = get_connection()
+    c = conn.cursor()
     try:
-        with open(STUDENTS_FILE, newline='') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                # Clean up keys and values - remove extra spaces
-                cleaned_row = {k.strip(): v.strip() for k, v in row.items()}
-                students.append(cleaned_row)
-    except FileNotFoundError:
+        c.execute("PRAGMA table_info(attendance)")
+        columns = [col[1] for col in c.fetchall()]
+        if 'lecture_id' not in columns:
+            c.execute('ALTER TABLE attendance ADD COLUMN lecture_id INTEGER')
+            conn.commit()
+    except Exception:
         pass
+    finally:
+        conn.close()
+
+
+# ==================== Student Operations ====================
+
+def add_student(student_code: str, name: str) -> Tuple[bool, str]:
+    """
+    Add a new student to the database.
+    Returns: (success: bool, message: str)
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    now = datetime.now().isoformat()
+    
+    try:
+        c.execute('INSERT INTO students (student_code, name, created_at) VALUES (?, ?, ?)',
+                  (student_code, name, now))
+        conn.commit()
+        return True, f"Student {name} registered successfully"
+    except sqlite3.IntegrityError:
+        return False, f"Student code '{student_code}' already exists"
+    except Exception as e:
+        return False, f"Failed to register student: {str(e)}"
+    finally:
+        conn.close()
+
+
+def get_student_by_code(student_code: str) -> Optional[Tuple[int, str, str]]:
+    """
+    Get student information by student code.
+    Returns: (id, student_code, name) or None if not found
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('SELECT id, student_code, name FROM students WHERE student_code = ?', 
+              (student_code,))
+    result = c.fetchone()
+    conn.close()
+    return result
+
+
+def get_student_by_id(student_id: int) -> Optional[Dict[str, str]]:
+    """
+    Get student information by ID.
+    Returns: {'code': str, 'name': str} or None
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('SELECT student_code, name FROM students WHERE id = ?', (student_id,))
+    row = c.fetchone()
+    conn.close()
+    
+    if row:
+        return {'code': row[0], 'name': row[1]}
+    return None
+
+
+def get_all_students() -> List[Tuple[str, str, str]]:
+    """
+    Get all students from database.
+    Returns: List of (student_code, name, created_at)
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('SELECT student_code, name, created_at FROM students')
+    results = c.fetchall()
+    conn.close()
+    return results
+
+
+def get_students_dict() -> Dict[int, Dict[str, str]]:
+    """
+    Get all students as a dictionary keyed by student ID.
+    Returns: {student_id: {'code': str, 'name': str}}
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('SELECT id, student_code, name FROM students')
+    students = {row[0]: {'code': row[1], 'name': row[2]} for row in c.fetchall()}
+    conn.close()
     return students
 
-def add_student(student):
-    students = load_students()
-    # Check duplicates with safe key access
-    for s in students:
-        try:
-            # Check for duplicate ID
-            if s.get('ID') == student.student_id:
-                return False
-            # Check for duplicate by name, DOB, and department
-            if (s.get('Name') == student.name and 
-                s.get('DOB') == student.dob and 
-                s.get('Department') == student.department):
-                return False
-        except (KeyError, TypeError):
-            continue
+
+def get_total_students() -> int:
+    """Get total count of registered students."""
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM students')
+    count = c.fetchone()[0]
+    conn.close()
+    return count
+
+
+# ==================== Attendance Operations ====================
+
+def mark_attendance(student_id: int, student_code: str, name: str, 
+                   method: str = 'recognition', lecture_id: Optional[int] = None) -> Tuple[bool, str]:
+    """
+    Mark attendance for a student.
+    Returns: (success: bool, message: str)
+    """
+    today = date.today().isoformat()
+    now = datetime.now().time().strftime('%H:%M:%S')
     
-    # Append student
-    with open(STUDENTS_FILE, 'a', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=student.to_dict().keys(), quoting=csv.QUOTE_MINIMAL)
-        if f.tell() == 0:
-            writer.writeheader()
-        writer.writerow(student.to_dict())
-    return True
-
-def record_attendance(student_id, module, lecture_number, status="Present"):
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            with open(ATTENDANCE_FILE, 'a', newline='') as f:
-                fieldnames = ["StudentID", "Module", "LectureNumber", "Date", "Status"]
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                if f.tell() == 0:
-                    writer.writeheader()
-                writer.writerow({
-                    "StudentID": student_id,
-                    "Module": module,
-                    "LectureNumber": lecture_number,
-                    "Date": datetime.now().strftime("%Y-%m-%d"),
-                    "Status": status
-                })
-            return True
-        except PermissionError:
-            if attempt < max_retries - 1:
-                import time
-                time.sleep(0.5)  # Wait half a second and retry
-            else:
-                return False
-        except Exception as e:
-            print(f"Unexpected error: {e}")
-            return False
-
-def check_duplicate_attendance(student_id, module, lecture_number):
-    """Check if attendance already recorded for this student, module, and lecture"""
+    conn = get_connection()
+    c = conn.cursor()
+    
     try:
-        with open(ATTENDANCE_FILE, 'r', newline='') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if (row.get('StudentID') == student_id and 
-                    row.get('Module') == module and 
-                    row.get('LectureNumber') == str(lecture_number)):
-                    return True
-    except FileNotFoundError:
-        return False
+        c.execute('''INSERT INTO attendance 
+                     (student_id, student_code, name, date, time, method, lecture_id) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                  (student_id, student_code, name, today, now, method, lecture_id))
+        conn.commit()
+        return True, f'Attendance recorded for {name}'
+    except sqlite3.IntegrityError:
+        return False, f'Attendance already recorded for {name} today'
     except Exception as e:
-        print(f"Error checking duplicate: {e}")
-        return False
-    return False
+        return False, f'Attendance failed: {str(e)}'
+    finally:
+        conn.close()
 
-def get_student_modules(student_id):
-    """Get the modules for a specific student"""
-    students = load_students()
+
+def get_all_attendance() -> List[Tuple[str, str, str, str, str]]:
+    """
+    Get all attendance records ordered by date and time (descending).
+    Returns: List of (student_code, name, date, time, method)
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('''SELECT student_code, name, date, time, method 
+                 FROM attendance 
+                 ORDER BY date DESC, time DESC''')
+    results = c.fetchall()
+    conn.close()
+    return results
+
+
+def get_attendance_by_date() -> List[Tuple[str, int]]:
+    """
+    Get attendance counts grouped by date.
+    Returns: List of (date, count)
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('''
+        SELECT date, COUNT(DISTINCT student_id) as count
+        FROM attendance
+        GROUP BY date
+        ORDER BY date
+    ''')
+    results = c.fetchall()
+    conn.close()
+    return results
+
+
+def get_attendance_summary() -> Dict:
+    """
+    Get overall attendance summary statistics.
+    Returns: {'total_students': int, 'attendance_by_date': List[Tuple]}
+    """
+    conn = get_connection()
+    c = conn.cursor()
+
+    c.execute('SELECT COUNT(*) FROM students')
+    total_students = c.fetchone()[0]
+
+    c.execute('''
+        SELECT date, COUNT(DISTINCT student_id) as count
+        FROM attendance
+        GROUP BY date
+        ORDER BY date
+    ''')
+    attendance_data = c.fetchall()
     
-    for s in students:
-        if s.get('ID') == student_id:
-            modules = s.get('Modules', '')
-            # Remove quotes if they exist
-            modules = modules.strip('"').strip("'").strip()
-            return modules
+    conn.close()
+
+    return {
+        'total_students': total_students,
+        'attendance_by_date': attendance_data
+    }
+
+
+# ==================== Lecture Operations ====================
+
+def create_lecture(title: str, lecture_date: Optional[str] = None) -> int:
+    """
+    Create a new lecture entry.
+    Returns: lecture_id
+    """
+    if lecture_date is None:
+        lecture_date = date.today().isoformat()
     
-    return None
-
-def get_all_modules():
-    """Get a unique list of all modules from modules.csv"""
-    modules = []
-    try:
-        with open(MODULES_FILE, 'r', newline='', encoding='utf-8-sig') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                # Try different possible column names (case-insensitive)
-                code = row.get('Code', row.get('code', row.get('CODE', ''))).strip()
-                module = row.get('Module', row.get('module', row.get('MODULE', ''))).strip()
-                department = row.get('Department', row.get('department', row.get('DEPARTMENT', ''))).strip()
-                
-                if code:  # Use code as the identifier
-                    modules.append({
-                        'code': code,
-                        'module': module,
-                        'department': department
-                    })
-            
-    except FileNotFoundError:
-        print("modules.csv not found")
-    except Exception as e:
-        print(f"Error reading modules.csv: {e}")
+    conn = get_connection()
+    c = conn.cursor()
+    now = datetime.now().isoformat()
     
-    return modules
-
-def get_modules_by_department(department):
-    """Get modules filtered by department"""
-    all_modules = get_all_modules()
-    if not department:
-        return all_modules
+    c.execute('INSERT INTO lectures (title, date, created_at) VALUES (?, ?, ?)',
+              (title, lecture_date, now))
+    lecture_id = c.lastrowid
+    conn.commit()
+    conn.close()
     
-    filtered = [m for m in all_modules if normalize_module_name(m['department']) == normalize_module_name(department)]
-    return filtered
+    return lecture_id
 
-def get_all_departments():
-    """Get unique list of departments from modules.csv"""
-    modules = get_all_modules()
-    departments = set()
-    for m in modules:
-        if m['department']:
-            departments.add(m['department'])
-    return sorted(list(departments))
 
-def normalize_module_name(module):
-    """Normalize module name for comparison (lowercase, strip spaces)"""
-    if not module:
-        return ""
-    return str(module).strip().lower()
-
-def validate_module_exists(module_code):
-    """Check if module code exists in modules.csv (case-insensitive)
-    Returns the properly cased module code if found, None otherwise"""
-    all_modules = get_all_modules()
-    normalized_input = normalize_module_name(module_code)
-    
-    for m in all_modules:
-        # Compare the module CODE, not the entire dict
-        if normalize_module_name(m['code']) == normalized_input:
-            return m['code']  # Return the properly cased code
-    return None
-
-def load_modules():
-    """Load all modules with full details"""
-    modules = []
-    try:
-        with open(MODULES_FILE, newline='', encoding='utf-8-sig') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                # Clean up keys and values
-                cleaned_row = {k.strip(): v.strip() for k, v in row.items()}
-                modules.append(cleaned_row)
-    except FileNotFoundError:
-        pass
-    return modules
-
-def initialize_modules_file():
-    """Create modules.csv with proper headers if it doesn't exist"""
-    try:
-        with open(MODULES_FILE, 'x', newline='', encoding='utf-8') as f:
-            fieldnames = ['Code', 'Module', 'Department']
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-        return True
-    except FileExistsError:
-        return True
-    except Exception as e:
-        print(f"Error creating modules file: {e}")
-        return False
-
-def reset_attendance_file():
-    """Reset attendance.csv file - remove all data but keep headers"""
-    try:
-        with open(ATTENDANCE_FILE, 'w', newline='') as f:
-            fieldnames = ["StudentID", "Module", "LectureNumber", "Date", "Status"]
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-        return True
-    except Exception as e:
-        print(f"Error resetting file: {e}")
-        return False
-
-def remove_attendance(student_id, module, lecture_number):
-    """Remove a specific attendance record"""
-    try:
-        # Read all attendance records
-        records = []
-        with open(ATTENDANCE_FILE, 'r', newline='') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                # Keep all records except the one we want to remove
-                if not (row.get('StudentID') == student_id and 
-                       row.get('Module') == module and 
-                       row.get('LectureNumber') == str(lecture_number)):
-                    records.append(row)
-        
-        # Write back all records except the removed one
-        with open(ATTENDANCE_FILE, 'w', newline='') as f:
-            fieldnames = ["StudentID", "Module", "LectureNumber", "Date", "Status"]
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(records)
-        return True
-    except FileNotFoundError:
-        return False
-    except Exception as e:
-        print(f"Error removing attendance: {e}")
-        return False
+def get_all_lectures() -> List[Tuple[int, str, str, str]]:
+    """
+    Get all lectures.
+    Returns: List of (id, title, date, created_at)
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('SELECT id, title, date, created_at FROM lectures ORDER BY date DESC')
+    results = c.fetchall()
+    conn.close()
+    return results
